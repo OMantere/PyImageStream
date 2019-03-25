@@ -3,19 +3,14 @@
 import argparse
 import os
 import io
+import asyncio
+import websockets
+import cv2
 
-import tornado.ioloop
-import tornado.web
-import tornado.websocket
-
-from PIL import Image
-
-import pygame.camera
-import pygame.image
 
 parser = argparse.ArgumentParser(description='Start the PyImageStream server.')
 
-parser.add_argument('--port', default=8888, type=int, help='Web server port (default: 8888)')
+parser.add_argument('--port', default=8001, type=int, help='Web server port (default: 8888)')
 parser.add_argument('--camera', default=0, type=int, help='Camera index, first camera is 0 (default: 0)')
 parser.add_argument('--width', default=640, type=int, help='Width (default: 640)')
 parser.add_argument('--height', default=480, type=int, help='Height (default: 480)')
@@ -28,9 +23,7 @@ class Camera:
 
     def __init__(self, index, width, height, quality, stopdelay):
         print("Initializing camera...")
-        pygame.camera.init()
-        camera_name = pygame.camera.list_cameras()[index]
-        self._cam = pygame.camera.Camera(camera_name, (width, height))
+        self._cap = cv2.VideoCapture(0)
         print("Camera initialized")
         self.is_started = False
         self.stop_requested = False
@@ -52,62 +45,43 @@ class Camera:
 
     def _start(self):
         print("Starting camera...")
-        self._cam.start()
+        self._cap.open(0)
         print("Camera started")
         self.is_started = True
 
     def _stop(self):
         if self.stop_requested:
             print("Stopping camera now...")
-            self._cam.stop()
+            self._cap.release()
             print("Camera stopped")
             self.is_started = False
             self.stop_requested = False
 
     def get_jpeg_image_bytes(self):
-        img = self._cam.get_image()
-        imgstr = pygame.image.tostring(img, "RGB", False)
-        pimg = Image.frombytes("RGB", img.get_size(), imgstr)
-        with io.BytesIO() as bytesIO:
-            pimg.save(bytesIO, "JPEG", quality=self.quality, optimize=True)
-            return bytesIO.getvalue()
+        cam_success, img = self._cap.read()
+        if not cam_success:
+            print("OpenCV: Camera capture failed")
+            return None
+        enc_success, buffer = cv2.imencode(".jpg", img)
+        if not enc_success:
+            print("OpenCV: Image encoding failed")
+            return None
+        return io.BytesIO(buffer).getvalue()
 
 
 camera = Camera(args.camera, args.width, args.height, args.quality, args.stopdelay)
 
+async def hello(websocket, path):
+    i = 0
+    while True:
+        data = camera.get_jpeg_image_bytes() 
+        if data:
+            await websocket.recv()
+            await websocket.send(data)
+            print("Sent image, len {}".format(len(data)))
 
-class ImageWebSocket(tornado.websocket.WebSocketHandler):
-    clients = set()
+start_server = websockets.serve(hello, 'localhost', 8001)
 
-    def check_origin(self, origin):
-        # Allow access from every origin
-        return True
+asyncio.get_event_loop().run_until_complete(start_server)
+asyncio.get_event_loop().run_forever()
 
-    def open(self):
-        ImageWebSocket.clients.add(self)
-        print("WebSocket opened from: " + self.request.remote_ip)
-        camera.request_start()
-
-    def on_message(self, message):
-        jpeg_bytes = camera.get_jpeg_image_bytes()
-        self.write_message(jpeg_bytes, binary=True)
-
-    def on_close(self):
-        ImageWebSocket.clients.remove(self)
-        print("WebSocket closed from: " + self.request.remote_ip)
-        if len(ImageWebSocket.clients) == 0:
-            camera.request_stop()
-
-
-script_path = os.path.dirname(os.path.realpath(__file__))
-static_path = script_path + '/static/'
-
-app = tornado.web.Application([
-        (r"/websocket", ImageWebSocket),
-        (r"/(.*)", tornado.web.StaticFileHandler, {'path': static_path, 'default_filename': 'index.html'}),
-    ])
-app.listen(args.port)
-
-print("Starting server: http://localhost:" + str(args.port) + "/")
-
-tornado.ioloop.IOLoop.current().start()
