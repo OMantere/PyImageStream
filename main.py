@@ -70,9 +70,8 @@ class Camera:
         return io.BytesIO(buffer).getvalue()
 
 
-camera = Camera(args.camera, args.width, args.height, args.quality, args.stopdelay)
 
-async def rpi_server(websocket, path):
+async def rpi_server(websocket, path, camera):
     i = 0
     while True:
         data = camera.get_jpeg_image_bytes() 
@@ -81,8 +80,13 @@ async def rpi_server(websocket, path):
             await websocket.send(data)
             print("Sent image, len {}".format(len(data)))
 
-start_server = websockets.serve(rpi_server, 'localhost', 8001)
 
-asyncio.get_event_loop().run_until_complete(start_server)
-asyncio.get_event_loop().run_forever()
+def ws_main():
+    camera = Camera(args.camera, args.width, args.height, args.quality, args.stopdelay)
+    start_server = websockets.serve(functools.partial(rpi_server, camera=camera), 'localhost', 8001)
+    asyncio.get_event_loop().run_until_complete(start_server)
+    asyncio.get_event_loop().run_forever()
 
+
+if __name__ == "__main__":
+    ws_main()
