@@ -4,6 +4,7 @@ import asyncio
 import websockets
 import time
 import functools
+import struct
 
 
 async def image_recv(q):
@@ -14,9 +15,14 @@ async def image_recv(q):
         while True:
             await websocket.send('')
             data = await websocket.recv()
-            # print("Received image, len {}".format(len(data)))
+            img = data[0:-16]
+            throttle = struct.unpack('d', data[-16:-8])
+            steering = struct.unpack('d', data[-8:])
+            print("THROTTLE: {0:.2f}, STEERING: {0:.2f}".format(steering, throttle))
             # with open('img_{}.jpg'.format(i), 'wb') as f:
                 # f.write(data)
+            # with open('actions_{}.jpg'.format(i), 'wb') as f:
+                # f.write(' '.join([throttle, steering]))
             await q.put(data)
             i += 1
             if i % 10 == 0:

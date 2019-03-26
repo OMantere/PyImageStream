@@ -6,7 +6,9 @@ import os
 import io
 import asyncio
 import websockets
+import multiprocessing
 import cv2
+import struct
 
 
 parser = argparse.ArgumentParser(description='Start the PyImageStream server.')
@@ -71,22 +73,22 @@ class Camera:
 
 
 
-async def rpi_server(websocket, path, camera):
+async def rpi_server(websocket, path, camera, last_throttle, last_steering):
     i = 0
     while True:
-        data = camera.get_jpeg_image_bytes() 
+        data = camera.get_jpeg_image_bytes()
         if data:
             await websocket.recv()
-            await websocket.send(data)
-            print("Sent image, len {}".format(len(data)))
+            await websocket.send(data + struct.pack('d', last_throttle.value) + struct.pack('d', last_steering.value))
+            print("Sent image and actions, len {}".format(len(data)))
 
 
-def ws_main():
+def ws_main(last_throttle, last_steering):
     camera = Camera(args.camera, args.width, args.height, args.quality, args.stopdelay)
-    start_server = websockets.serve(functools.partial(rpi_server, camera=camera), 'localhost', 8001)
+    start_server = websockets.serve(functools.partial(rpi_server, camera=camera, last_throttle=last_throttle, last_steering=last_steering), 'localhost', 8001)
     asyncio.get_event_loop().run_until_complete(start_server)
     asyncio.get_event_loop().run_forever()
 
 
 if __name__ == "__main__":
-    ws_main()
+    ws_main(multiprocessing.Value('f', 0.0), multiprocessing.Value('f', 0.0))
