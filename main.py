@@ -9,29 +9,25 @@ import websockets
 import multiprocessing
 import cv2
 import struct
+import numpy as np
+#from productionmodel import preprocess_input, read_img
 
-
-parser = argparse.ArgumentParser(description='Start the PyImageStream server.')
-
-parser.add_argument('--port', default=8001, type=int, help='Web server port (default: 8888)')
-parser.add_argument('--camera', default=0, type=int, help='Camera index, first camera is 0 (default: 0)')
-parser.add_argument('--width', default=640, type=int, help='Width (default: 640)')
-parser.add_argument('--height', default=480, type=int, help='Height (default: 480)')
-parser.add_argument('--quality', default=70, type=int, help='JPEG Quality 1 (worst) to 100 (best) (default: 70)')
-parser.add_argument('--stopdelay', default=7, type=int, help='Delay in seconds before the camera will be stopped after '
-                                                             'all clients have disconnected (default: 7)')
-args = parser.parse_args()
 
 class Camera:
+    def undistort(self, img):
+        im = read_img(img)
+        return cv2.flip(cv2.cvtColor(preprocess_input(im), cv2.COLOR_BGR2RGB), -1)
 
-    def __init__(self, index, width, height, quality, stopdelay):
+    def __init__(self):
         print("Initializing camera...")
         self._cap = cv2.VideoCapture(0)
         print("Camera initialized")
         self.is_started = False
         self.stop_requested = False
-        self.quality = quality
-        self.stopdelay = stopdelay
+        self.stopdelay = 5
+        self.K = np.array([[566.6831609985564, 0.0, 323.44794935344066], [0.0, -1014.5535988758012, 217.3589939489544], [0.0, 0.0, 1.0]])
+        self.D = np.array([[-2099.453403176174], [2004995.4106032234], [-1867535069.0554066], [720237063401.1055]])
+        self.DIM = (640, 480)
 
     def request_start(self):
         if self.stop_requested:
@@ -62,6 +58,7 @@ class Camera:
 
     def get_jpeg_image_bytes(self):
         cam_success, img = self._cap.read()
+        #img = self.undistort(img)
         if not cam_success:
             print("OpenCV: Camera capture failed")
             return None
@@ -80,15 +77,15 @@ async def rpi_server(websocket, path, camera, last_throttle, last_steering):
         if data:
             await websocket.recv()
             await websocket.send(data + struct.pack('d', last_throttle.value) + struct.pack('d', last_steering.value))
-            print("Sent image and actions, len {}".format(len(data)))
+            #print("Sent image and actions, len {}".format(len(data)))
 
 
 def ws_main(last_throttle, last_steering):
-    camera = Camera(args.camera, args.width, args.height, args.quality, args.stopdelay)
-    start_server = websockets.serve(functools.partial(rpi_server, camera=camera, last_throttle=last_throttle, last_steering=last_steering), 'localhost', 8001)
+    camera = Camera()
+    start_server = websockets.serve(functools.partial(rpi_server, camera=camera, last_throttle=last_throttle, last_steering=last_steering), '0.0.0.0', 8001)
     asyncio.get_event_loop().run_until_complete(start_server)
     asyncio.get_event_loop().run_forever()
 
 
 if __name__ == "__main__":
-    ws_main(multiprocessing.Value('f', 0.0), multiprocessing.Value('f', 0.0))
+    ws_main(multiprocessing.Value('f', 0.5), multiprocessing.Value('f', 0.5))
